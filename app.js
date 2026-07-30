@@ -856,10 +856,25 @@
     // 6. Ensure results section starts hidden (HTML has class="hidden")
     // Nothing to do — the class is already in HTML
 
-    // 7. Set summary mode as default active
+    // 7. Sync visible mode with actual checkbox state (handles browser-restored state on reload)
+    var toggle = byId('inputModeToggle');
     var summaryMode = byId('summaryMode');
     var yearlyMode = byId('yearlyMode');
-    if (summaryMode) summaryMode.classList.remove('hidden');
-    if (yearlyMode) yearlyMode.classList.add('hidden');
+    var labelSummary = byId('modeSummaryLabel');
+    var labelYearly = byId('modeYearlyLabel');
+
+    if (toggle && toggle.checked) {
+      // Yearly mode is active (browser restored checked state)
+      if (summaryMode) summaryMode.classList.add('hidden');
+      if (yearlyMode) yearlyMode.classList.remove('hidden');
+      if (labelSummary) labelSummary.classList.remove('active');
+      if (labelYearly) labelYearly.classList.add('active');
+    } else {
+      // Summary mode (default)
+      if (summaryMode) summaryMode.classList.remove('hidden');
+      if (yearlyMode) yearlyMode.classList.add('hidden');
+      if (labelSummary) labelSummary.classList.add('active');
+      if (labelYearly) labelYearly.classList.remove('active');
+    }
   });
 })();
