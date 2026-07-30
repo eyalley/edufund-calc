@@ -34,7 +34,7 @@
 
   /**
    * Format a number as a percentage string (e.g. "12.3%").
-   * @param {number} num – Already in percentage form (e.g. 12.3 not 0.123)
+   * @param {number} num  – Already in percentage form (e.g. 12.3 not 0.123)
    */
   function formatPercent(num) {
     return num.toFixed(1) + '%';
@@ -273,14 +273,26 @@
   //  YEARLY DEPOSITS TABLE  (Yearly Mode)
   // ══════════════════════════════════════════════════════════════
 
-  function generateYearlyDepositsTable(startYear) {
+  function generateYearlyDepositsTable(startYear, withdrawalYear) {
     var tbody = byId('yearlyDepositsBody');
     if (!tbody) return;
+
+    // Save existing user inputs per year
+    var existingValues = {};
+    tbody.querySelectorAll('.yearly-deposit-amount').forEach(function (input) {
+      var yr = parseInt(input.getAttribute('data-year'), 10);
+      if (yr && input.value !== '') {
+        existingValues[yr] = input.value;
+      }
+    });
+
     tbody.innerHTML = '';
-
     var ceilings = CalculationEngine.getHistoricalCeilings();
+    var sYear = startYear || (byId('startYear') ? parseInt(byId('startYear').value, 10) : DEFAULT_START_YEAR) || DEFAULT_START_YEAR;
+    var wYear = withdrawalYear || (byId('withdrawalYear') ? parseInt(byId('withdrawalYear').value, 10) : CURRENT_YEAR) || CURRENT_YEAR;
+    var endYear = Math.max(CURRENT_YEAR, wYear);
 
-    for (var year = startYear; year <= CURRENT_YEAR; year++) {
+    for (var year = sYear; year <= endYear; year++) {
       var tr = document.createElement('tr');
       tr.className = 'yearly-deposit-row';
       tr.setAttribute('data-year', year);
@@ -295,21 +307,29 @@
       var inputDeposit = document.createElement('input');
       inputDeposit.type = 'text';
       inputDeposit.className = 'input-field yearly-deposit-amount number-input';
-      inputDeposit.placeholder = '₪ הפקדה שנתית';
+      inputDeposit.placeholder = '0';
       inputDeposit.setAttribute('inputmode', 'numeric');
       inputDeposit.setAttribute('data-year', year);
+      if (existingValues[year] !== undefined) {
+        inputDeposit.value = existingValues[year];
+      }
       tdDeposit.appendChild(inputDeposit);
 
       // Ceiling (readonly)
       var tdCeiling = document.createElement('td');
       tdCeiling.className = 'ceiling-cell';
-      var ceiling = ceilings[year];
-      tdCeiling.textContent = ceiling != null ? formatCurrency(ceiling) : '—';
+      var ceiling = ceilings[year] || 18854.40;
+      tdCeiling.textContent = formatCurrency(ceiling);
 
       // Tax-free % (readonly, auto-calculated)
       var tdTaxFree = document.createElement('td');
       tdTaxFree.className = 'tax-free-cell';
-      tdTaxFree.textContent = '—';
+      if (existingValues[year] !== undefined && parseNum(existingValues[year]) > 0) {
+        var r = CalculationEngine.splitDepositByCeiling(parseNum(existingValues[year]), year);
+        tdTaxFree.textContent = formatPercent(r * 100);
+      } else {
+        tdTaxFree.textContent = '—';
+      }
 
       // Recalculate tax-free % when deposit changes
       (function (inputEl, taxFreeEl, yr) {
@@ -332,22 +352,37 @@
     }
   }
 
-  function setupStartYearListener() {
+  function setupYearInputListeners() {
     var startYearInput = byId('startYear');
-    if (!startYearInput) return;
+    var withdrawalYearInput = byId('withdrawalYear');
 
-    startYearInput.addEventListener('change', function () {
-      var startYear = parseInt(startYearInput.value, 10);
-      if (isNaN(startYear) || startYear < 1990 || startYear > CURRENT_YEAR) {
-        startYear = DEFAULT_START_YEAR;
-        startYearInput.value = startYear;
-      }
-      generateYearlyDepositsTable(startYear);
-    });
+    if (startYearInput) {
+      startYearInput.addEventListener('change', function () {
+        var startYear = parseInt(startYearInput.value, 10);
+        if (isNaN(startYear) || startYear < 1990 || startYear > CURRENT_YEAR) {
+          startYear = DEFAULT_START_YEAR;
+          startYearInput.value = startYear;
+        }
+        var wYear = withdrawalYearInput ? parseInt(withdrawalYearInput.value, 10) : CURRENT_YEAR;
+        generateYearlyDepositsTable(startYear, wYear);
+      });
+    }
+
+    if (withdrawalYearInput) {
+      withdrawalYearInput.addEventListener('change', function () {
+        var wYear = parseInt(withdrawalYearInput.value, 10);
+        if (isNaN(wYear) || wYear < CURRENT_YEAR) {
+          wYear = CURRENT_YEAR;
+          withdrawalYearInput.value = wYear;
+        }
+        var startYear = startYearInput ? parseInt(startYearInput.value, 10) : DEFAULT_START_YEAR;
+        generateYearlyDepositsTable(startYear, wYear);
+      });
+    }
   }
 
   /**
-   * Read yearly deposits from the DOM.
+   * Read yearly deposits from the DOM (defaults 0 for empty years).
    * @returns {{ year: number, amount: number, taxFreeRatio: number }[]}
    */
   function getYearlyDeposits() {
@@ -357,13 +392,11 @@
       var year = parseInt(row.getAttribute('data-year'), 10);
       var input = row.querySelector('.yearly-deposit-amount');
       var amount = parseNum(input.value);
-      if (amount > 0) {
-        deposits.push({
-          year: year,
-          amount: amount,
-          taxFreeRatio: CalculationEngine.splitDepositByCeiling(amount, year)
-        });
-      }
+      deposits.push({
+        year: year,
+        amount: amount,
+        taxFreeRatio: amount > 0 ? CalculationEngine.splitDepositByCeiling(amount, year) : 1
+      });
     });
     return deposits;
   }
@@ -471,11 +504,24 @@
       var d = monthlyData[i];
       var tr = document.createElement('tr');
 
+      var isStartRow = d.month === 0;
+      if (isStartRow) {
+        tr.style.background = 'rgba(99,102,241,0.08)';
+        tr.style.fontWeight = '600';
+      }
+
+      var monthLabel = isStartRow ? 'התחלה' : d.month;
+      var withdrawalLabel = isStartRow ? '—' : formatCurrency(d.withdrawal);
+      var taxLabel = isStartRow
+        ? (d.tax > 0 ? '⚡ ' + formatCurrency(d.tax) + ' (מס יציאה)' : '—')
+        : formatCurrency(d.tax);
+      var netLabel = isStartRow ? '—' : formatCurrency(d.netReceived);
+
       var cells = [
-        d.month,
-        formatCurrency(d.withdrawal),
-        formatCurrency(d.tax),
-        formatCurrency(d.netReceived),
+        monthLabel,
+        withdrawalLabel,
+        taxLabel,
+        netLabel,
         formatCurrency(d.remainingBalance),
         formatCurrency(d.cumulativeTax),
         formatCurrency(d.cumulativeNet),
@@ -510,6 +556,7 @@
       }
     }
   }
+
 
   // ══════════════════════════════════════════════════════════════
   //  RENDER RESULTS
@@ -622,11 +669,16 @@
     var valid = true;
 
     // ── Common parameters ───────────────────────────────────
-    // NOTE: Engine expects raw percentage values (e.g. 6 for 6%, not 0.06)
     var annualGrowth = parseNum(byId('toolAGrowth') ? byId('toolAGrowth').value : 0);
     var annualFee = parseNum(byId('toolAFee') ? byId('toolAFee').value : 0);
     var monthlyWithdrawal = parseNum(byId('monthlyWithdrawal') ? byId('monthlyWithdrawal').value : 0);
     var inflationRate = parseNum(byId('inflationRate') ? byId('inflationRate').value : 2);
+    var withdrawalYear = parseNum(byId('withdrawalYear') ? byId('withdrawalYear').value : CURRENT_YEAR) || CURRENT_YEAR;
+
+    if (withdrawalYear < CURRENT_YEAR) {
+      withdrawalYear = CURRENT_YEAR;
+      if (byId('withdrawalYear')) byId('withdrawalYear').value = CURRENT_YEAR;
+    }
 
     // Scenario B specific
     var toolBGrowth = parseNum(byId('toolBGrowth') ? byId('toolBGrowth').value : 0);
@@ -649,17 +701,36 @@
     if (isYearlyMode()) {
       // ── Yearly mode ─────────────────────────────────────
       var yearlyDeposits = getYearlyDeposits();
-      if (yearlyDeposits.length === 0) {
+      var hasAnyDeposit = yearlyDeposits.some(function (d) { return d.amount > 0; });
+      var yearlyTotalBalance = parseNum(byId('yearlyTotalBalance') ? byId('yearlyTotalBalance').value : 0);
+
+      if (yearlyTotalBalance <= 0) {
+        showError('yearlyTotalBalance', 'יש להזין יתרה נוכחית');
+        valid = false;
+      }
+
+      if (!hasAnyDeposit) {
         showError('startYear', 'יש להזין הפקדה שנתית אחת לפחות');
         valid = false;
-      } else {
-        // getYearlyDeposits() already returns {year, amount, taxFreeRatio}
-        deposits = CalculationEngine.calculateDepositCurrentValues(
-          yearlyDeposits,
-          annualGrowth,
-          annualFee,
-          CURRENT_YEAR
-        );
+      } else if (yearlyTotalBalance > 0) {
+        // Calculate sum of past deposits (year <= CURRENT_YEAR)
+        var totalPastContributions = yearlyDeposits.reduce(function (sum, d) {
+          return d.year <= CURRENT_YEAR ? sum + d.amount : sum;
+        }, 0);
+
+        if (yearlyTotalBalance < totalPastContributions) {
+          showError('yearlyTotalBalance', 'היתרה הנוכחית (' + formatCurrency(yearlyTotalBalance) +
+            ') נמוכה מסך ההפקדות עד היום (' + formatCurrency(totalPastContributions) + ')');
+          valid = false;
+        } else {
+          deposits = CalculationEngine.calculateDepositCurrentValues(
+            yearlyDeposits,
+            annualGrowth,
+            annualFee,
+            CURRENT_YEAR,
+            yearlyTotalBalance
+          );
+        }
       }
     } else {
       // ── Summary mode ────────────────────────────────────
@@ -705,6 +776,7 @@
         principal: totalPrincipal,
         currentValue: totalBalance,
         taxFreeRatio: taxFreeRatio,
+        year: CURRENT_YEAR
       }];
     }
 
@@ -717,6 +789,8 @@
       annualFee: annualFee,
       monthlyWithdrawal: monthlyWithdrawal,
       inflationRate: inflationRate,
+      currentYear: CURRENT_YEAR,
+      withdrawalYear: withdrawalYear
     };
 
     var paramsB = {
@@ -725,9 +799,11 @@
       annualFee: annualFee,
       monthlyWithdrawal: monthlyWithdrawal,
       inflationRate: inflationRate,
+      currentYear: CURRENT_YEAR,
+      withdrawalYear: withdrawalYear,
       toolBGrowth: toolBGrowth,
       toolBFee: toolBFee,
-      toolBTaxRate: toolBTaxRate,
+      toolBTaxRate: toolBTaxRate
     };
 
     // ── Run calculations ────────────────────────────────────
@@ -749,19 +825,26 @@
     // 2. Set up event listeners
     setupInputModeToggle();
     setupAddProfitLayer();
-    setupStartYearListener();
+    setupYearInputListeners();
     setupNumberFormatting();
     setupChartTabs();
     setupScenarioTabs();
 
-    // 3. Generate yearly deposits table based on default start year
+    // 3. Set default withdrawal year to current year if empty
+    var withdrawalYearInput = byId('withdrawalYear');
+    if (withdrawalYearInput && !withdrawalYearInput.value) {
+      withdrawalYearInput.value = CURRENT_YEAR;
+    }
+
+    // 4. Generate yearly deposits table based on default start year and withdrawal year
     var startYearInput = byId('startYear');
     if (startYearInput) {
       startYearInput.value = DEFAULT_START_YEAR;
     }
-    generateYearlyDepositsTable(DEFAULT_START_YEAR);
+    var wYear = withdrawalYearInput ? parseInt(withdrawalYearInput.value, 10) : CURRENT_YEAR;
+    generateYearlyDepositsTable(DEFAULT_START_YEAR, wYear);
 
-    // 4. Calculate button
+    // 5. Calculate button
     var calcBtn = byId('calculateBtn');
     if (calcBtn) {
       calcBtn.addEventListener('click', function (e) {
@@ -770,10 +853,10 @@
       });
     }
 
-    // 5. Ensure results section starts hidden (HTML has class="hidden")
+    // 6. Ensure results section starts hidden (HTML has class="hidden")
     // Nothing to do — the class is already in HTML
 
-    // 6. Set summary mode as default active
+    // 7. Set summary mode as default active
     var summaryMode = byId('summaryMode');
     var yearlyMode = byId('yearlyMode');
     if (summaryMode) summaryMode.classList.remove('hidden');

@@ -60,10 +60,16 @@ const ChartManager = (function () {
    * Build X-axis labels that show 'שנה X' every 12 months.
    * Returns an array of labels the same length as `maxLen`.
    */
+  /**
+   * Build X-axis labels that show 'התחלה' for month 0 and 'שנה X' every 12 months.
+   * Returns an array of labels the same length as `maxLen`.
+   */
   function buildMonthLabels(maxLen) {
     const labels = [];
-    for (let m = 1; m <= maxLen; m++) {
-      if (m % 12 === 0) {
+    for (let m = 0; m < maxLen; m++) {
+      if (m === 0) {
+        labels.push('התחלה');
+      } else if (m % 12 === 0) {
         labels.push('שנה ' + (m / 12));
       } else {
         labels.push(m.toString());
@@ -130,7 +136,7 @@ const ChartManager = (function () {
   function lineScales() {
     return {
       x: {
-        reverse: true,               // RTL – newest on the left
+        reverse: false,              // Left to right (Month 0 / Start on left)
         grid: { color: COLORS.grid },
         ticks: {
           maxRotation: 0,
