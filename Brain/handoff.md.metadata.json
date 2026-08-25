@@ -1,0 +1,5 @@
+{
+  "summary": "Comprehensive handoff document for the finance_calc project covering: project overview, file structure, input modes (summary vs yearly deposits), engine architecture (Scenario A/B calculation flow, FIFO tax rules, monthly-granularity deposit valuation, CAGR solver), chart system, UI/app layer decisions, known bugs fixed, design decisions, and testing instructions.",
+  "updatedAt": "2026-08-25T15:30:22.384591600Z",
+  "userFacing": true
+}

@@ -169,128 +169,140 @@ var CalculationEngine = (function () {
     return taxFreeRatio;
   }
 
-  /**
-   * @description מציאת שיעור תשואה שנתי היסטורי משוקלל בזמן (CAGR) המשערך את הפקדות העבר ליתרה הנוכחית בדיוק
-   * @param {Array<{year: number, amount: number, taxFreeRatio: number}>} pastDeposits
-   * @param {number} currentBalanceToday
-   * @param {number} currentYear
-   */
-  function solveHistoricalCAGR(pastDeposits, currentBalanceToday, currentYear) {
-    var totalPast = 0;
-    var hasPositiveHoldingTime = false;
-    for (var i = 0; i < pastDeposits.length; i++) {
-      totalPast += pastDeposits[i].amount;
-      if (currentYear > pastDeposits[i].year) {
-        hasPositiveHoldingTime = true;
-      }
-    }
-
-    if (Math.abs(totalPast - currentBalanceToday) < 0.01 || !hasPositiveHoldingTime) {
-      var scale = totalPast > 0 ? currentBalanceToday / totalPast : 1;
-      return {
-        getVal: function (dep) { return dep.amount * scale; },
-        cagr: 0
-      };
-    }
-
-    var low = 0;
-    var high = 100;
-    var mid = 0;
-
-    for (var iter = 0; iter < 60; iter++) {
-      mid = (low + high) / 2;
-      var sumVal = 0;
-      for (var j = 0; j < pastDeposits.length; j++) {
-        var yrs = currentYear - pastDeposits[j].year;
-        sumVal += pastDeposits[j].amount * Math.pow(1 + mid, yrs);
-      }
-      if (sumVal < currentBalanceToday) {
-        low = mid;
-      } else {
-        high = mid;
-      }
-    }
-
-    var finalR = (low + high) / 2;
-    return {
-      getVal: function (dep) {
-        var yrs = currentYear - dep.year;
-        return dep.amount * Math.pow(1 + finalR, yrs);
-      },
-      cagr: finalR
-    };
-  }
-
   // ---------------------------------------------------------------------------
-  // Helper: calculateDepositCurrentValues
+  // Helper: calculateDepositCurrentValues  (monthly-granularity precision)
   // ---------------------------------------------------------------------------
 
   /**
-   * @description מחשב ערך נוכחי של הפקדות שנתיות. במידה וניתנה יתרה נוכחית להיום (currentBalanceToday), מחושבת תשואה היסטורית משוקללת (Option B - CAGR).
+   * @description מחשב ערך נוכחי של הפקדות שנתיות בחלוקה ל-12 הפקדות חודשיות שווות.
+   * כל הפקדה חודשית צוברת רווחים מחודש ההפקדה שלה בלבד.
+   * שיעור פטור ממס נשמר לפי שנה (אותו יחס לכל 12 תת-הפקדות).
+   * במידה וניתנה יתרה נוכחית (currentBalanceToday), מחושב CAGR בביסקציה על ההפקדות החודשיות.
+   *
    * @param {Array<{year: number, amount: number, taxFreeRatio: number}>} yearlyDeposits
    * @param {number} annualGrowth - Expected future annual growth rate (%)
-   * @param {number} annualFee - Annual management fee (%)
-   * @param {number} currentYear - The current year for elapsed-time calculation
-   * @param {number} [currentBalanceToday] - Current total balance of fund today (optional)
-   * @returns {Deposit[]}
+   * @param {number} annualFee   - Annual management fee (%)
+   * @param {number} currentYear - Reference year (Jan 1 of this year = "today")
+   * @param {number} [currentBalanceToday] - Current total balance today (optional, triggers CAGR solver)
+   * @returns {Deposit[]} Ordered oldest→newest (FIFO order), future deposits appended last.
    */
   function calculateDepositCurrentValues(yearlyDeposits, annualGrowth, annualFee, currentYear, currentBalanceToday) {
-    if (currentBalanceToday != null && currentBalanceToday > 0) {
-      var pastDeposits = yearlyDeposits.filter(function (d) {
-        return d.year <= currentYear && d.amount > 0;
-      });
+    // ── Step 1: build monthly sub-deposits from past yearly deposits ──────────
+    var monthly = [];   // past months, to be valued
+    var future  = [];   // future deposits, kept as single entries (currentValue = 0)
 
-      var solverResult = solveHistoricalCAGR(pastDeposits, currentBalanceToday, currentYear);
+    for (var di = 0; di < yearlyDeposits.length; di++) {
+      var yd = yearlyDeposits[di];
+      if (yd.year > currentYear) {
+        future.push({
+          principal:    yd.amount,
+          currentValue: 0,
+          taxFreeRatio: yd.taxFreeRatio,
+          year: yd.year
+        });
+        continue;
+      }
+      if (!yd.amount || yd.amount <= 0) continue;
 
-      return yearlyDeposits.map(function (d) {
-        if (d.year > currentYear) {
-          return {
-            principal: d.amount,
-            currentValue: 0,
-            taxFreeRatio: d.taxFreeRatio,
-            year: d.year
-          };
-        }
+      var monthlyAmt = yd.amount / 12;
 
-        var val = d.amount > 0 ? solverResult.getVal(d) : 0;
-        return {
-          principal: d.amount,
-          currentValue: round2(val),
-          taxFreeRatio: d.taxFreeRatio,
-          year: d.year
-        };
-      });
+      // month index m: 0 = January, 11 = December
+      // Reference point = Jan 1 of currentYear.
+      // A deposit made in month m of year Y has been invested for:
+      //   (currentYear - Y)*12 - m  months
+      // (Jan of Y → most elapsed; Dec of Y → least)
+      for (var m = 0; m < 12; m++) {
+        var elapsed = Math.max(0, (currentYear - yd.year) * 12 - m);
+        monthly.push({
+          principal:    monthlyAmt,
+          taxFreeRatio: yd.taxFreeRatio,
+          elapsedMonths: elapsed,
+          year: yd.year,
+          monthIdx: m    // kept for deterministic sort within same year
+        });
+      }
     }
 
-    var mgr = monthlyGrowthRate(annualGrowth);
-    var mfr = monthlyFeeFraction(annualFee);
-
-    return yearlyDeposits.map(function (d) {
-      if (d.year > currentYear) {
-        return {
-          principal: d.amount,
-          currentValue: 0,
-          taxFreeRatio: d.taxFreeRatio,
-          year: d.year
-        };
-      }
-
-      var years = currentYear - d.year;
-      var months = years * 12;
-      var value = d.amount;
-
-      for (var m = 0; m < months; m++) {
-        value *= (1 + mgr);
-        value *= (1 - mfr);
-      }
-
-      return {
-        principal: d.amount,
-        currentValue: round2(value),
-        taxFreeRatio: d.taxFreeRatio,
-        year: d.year
-      };
+    // Sort oldest→newest (most elapsed first) — preserves FIFO withdrawal order
+    monthly.sort(function (a, b) {
+      if (b.elapsedMonths !== a.elapsedMonths) return b.elapsedMonths - a.elapsedMonths;
+      return a.monthIdx - b.monthIdx;   // tie-break: January before December
     });
+
+    // ── Step 2: value each monthly sub-deposit ────────────────────────────────
+    var result = [];
+
+    if (currentBalanceToday != null && currentBalanceToday > 0) {
+      // --- CAGR solver (bisection) on monthly granularity ---
+      var totalPrincipal = 0;
+      var hasElapsed = false;
+      for (var i = 0; i < monthly.length; i++) {
+        totalPrincipal += monthly[i].principal;
+        if (monthly[i].elapsedMonths > 0) hasElapsed = true;
+      }
+
+      var finalR = 0;
+      if (Math.abs(totalPrincipal - currentBalanceToday) < 0.01 || !hasElapsed) {
+        // No growth needed — scale proportionally
+        finalR = 0;
+        var scale = totalPrincipal > 0 ? currentBalanceToday / totalPrincipal : 1;
+        for (var i = 0; i < monthly.length; i++) {
+          result.push({
+            principal:    monthly[i].principal,
+            currentValue: round2(monthly[i].principal * scale),
+            taxFreeRatio: monthly[i].taxFreeRatio,
+            year:         monthly[i].year
+          });
+        }
+      } else {
+        // Bisect: find annual rate r such that Σ (monthlyPrincipal × (1+r)^(months/12)) = currentBalanceToday
+        var low = 0, high = 100;
+        for (var iter = 0; iter < 80; iter++) {
+          var mid = (low + high) / 2;
+          var sumVal = 0;
+          for (var j = 0; j < monthly.length; j++) {
+            sumVal += monthly[j].principal * Math.pow(1 + mid, monthly[j].elapsedMonths / 12);
+          }
+          if (sumVal < currentBalanceToday) { low = mid; } else { high = mid; }
+        }
+        finalR = (low + high) / 2;
+        for (var i = 0; i < monthly.length; i++) {
+          var val = monthly[i].principal * Math.pow(1 + finalR, monthly[i].elapsedMonths / 12);
+          result.push({
+            principal:    monthly[i].principal,
+            currentValue: round2(val),
+            taxFreeRatio: monthly[i].taxFreeRatio,
+            year:         monthly[i].year
+          });
+        }
+      }
+
+    } else {
+      // --- Expected growth + fee, compounded monthly ---
+      var mgr = monthlyGrowthRate(annualGrowth);
+      var mfr = monthlyFeeFraction(annualFee);
+      // net monthly multiplier (apply growth then deduct fee):
+      var netMult = (1 + mgr) * (1 - mfr);
+
+      for (var i = 0; i < monthly.length; i++) {
+        var md = monthly[i];
+        // Math.pow is exact for this compound formula
+        var value = md.principal * Math.pow(netMult, md.elapsedMonths);
+        result.push({
+          principal:    md.principal,
+          currentValue: round2(value),
+          taxFreeRatio: md.taxFreeRatio,
+          year:         md.year
+        });
+      }
+    }
+
+    // Append future deposits (ordered by year, currentValue = 0)
+    for (var fi = 0; fi < future.length; fi++) {
+      result.push(future[fi]);
+    }
+
+    return result;
   }
 
   // ---------------------------------------------------------------------------
