@@ -654,6 +654,22 @@
     setTextIfExists('diffNet', formatCurrency(Math.abs(sa.totalNetReceived - sb.totalNetReceived)));
     setTextIfExists('diffMonths', Math.abs((sa.monthsToExhaustion || 0) - (sb.monthsToExhaustion || 0)) + ' חודשים');
 
+    var diffBreakevenContainer = byId('diffBreakevenContainer');
+    if (diffBreakevenContainer) {
+      if (diff < 0) {
+        // Scenario B is preferred
+        var breakevenM = findFeeBreakevenMonth();
+        if (breakevenM != null) {
+          setTextIfExists('diffBreakeven', breakevenM + ' חודשים');
+          diffBreakevenContainer.classList.remove('hidden');
+        } else {
+          diffBreakevenContainer.classList.add('hidden');
+        }
+      } else {
+        diffBreakevenContainer.classList.add('hidden');
+      }
+    }
+
     // ── Charts ──────────────────────────────────────────────
     // Make all canvases visible temporarily for Chart.js to calculate dimensions
     var canvasIds = ['balanceChart', 'taxChart', 'netChart', 'breakdownChart'];
