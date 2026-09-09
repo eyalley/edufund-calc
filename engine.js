@@ -365,6 +365,7 @@ var CalculationEngine = (function () {
     monthlyData.push({
       month: 0,
       withdrawal: 0,
+      fee: 0,
       tax: 0,
       netReceived: 0,
       remainingBalance: initialBalanceA,
@@ -395,8 +396,11 @@ var CalculationEngine = (function () {
       }
 
       // --- Step 2: MANAGEMENT FEE on each active deposit ---
+      var monthFee = 0;
       for (var i = 0; i < activeDeposits.length; i++) {
-        activeDeposits[i].currentValue *= (1 - mfr);
+        var fee = activeDeposits[i].currentValue * mfr;
+        monthFee += fee;
+        activeDeposits[i].currentValue -= fee;
       }
 
       // --- Step 3: WITHDRAWAL ---
@@ -454,6 +458,7 @@ var CalculationEngine = (function () {
       monthlyData.push({
         month: month + 1,
         withdrawal: round2(actualWithdrawal),
+        fee: round2(monthFee),
         tax: monthTax,
         netReceived: netReceived,
         remainingBalance: remainingBalance,
@@ -553,6 +558,7 @@ var CalculationEngine = (function () {
     monthlyData.push({
       month: 0,
       withdrawal: 0,
+      fee: 0,
       tax: totalTaxOnA,
       netReceived: 0,
       remainingBalance: initialBalanceB,
@@ -581,7 +587,8 @@ var CalculationEngine = (function () {
       currentValue *= (1 + mgr);
 
       // --- Fee ---
-      currentValue *= (1 - mfr);
+      var monthFee = currentValue * mfr;
+      currentValue -= monthFee;
 
       // --- Withdraw ---
       var isWithdrawalPhase = month >= growthMonths;
@@ -621,6 +628,7 @@ var CalculationEngine = (function () {
       monthlyData.push({
         month: month + 1,
         withdrawal: round2(withdrawal),
+        fee: round2(monthFee),
         tax: monthTax,
         netReceived: netReceived,
         remainingBalance: round2(currentValue),

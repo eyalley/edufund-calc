@@ -488,9 +488,9 @@
 
       var scenario = tab.getAttribute('data-scenario');
       if (scenario === 'a' && lastResultA) {
-        renderBreakdownTable(lastResultA.monthlyData);
+        renderBreakdownTable(lastResultA.monthlyData, null, 'a');
       } else if (scenario === 'b' && lastResultB) {
-        renderBreakdownTable(lastResultB.monthlyData);
+        renderBreakdownTable(lastResultB.monthlyData, null, 'b');
       }
     });
   }
@@ -499,11 +499,40 @@
   //  BREAKDOWN TABLE
   // ══════════════════════════════════════════════════════════════
 
-  function renderBreakdownTable(monthlyData, maxRows) {
+  /**
+   * Find the 1-based month index in Scenario B where cumulative fee savings
+   * (Fee A - Fee B) offset the initial exit tax paid in Month 0.
+   */
+  function findFeeBreakevenMonth() {
+    if (!lastResultA || !lastResultB) return null;
+    var dataA = lastResultA.monthlyData;
+    var dataB = lastResultB.monthlyData;
+    if (!dataA || !dataB || dataB.length === 0) return null;
+
+    var exitTax = dataB[0].tax || 0;
+    if (exitTax <= 0) return null; // No exit tax to offset
+
+    var cumFeeDiff = 0;
+    var len = Math.min(dataA.length, dataB.length);
+    for (var i = 1; i < len; i++) {
+      var feeA = dataA[i].fee || 0;
+      var feeB = dataB[i].fee || 0;
+      var feeDiff = feeA - feeB; // Positive when Tool B fee is lower than Tool A
+      cumFeeDiff += feeDiff;
+      if (cumFeeDiff >= exitTax) {
+        return dataB[i].month; // e.g. month number
+      }
+    }
+    return null;
+  }
+
+  function renderBreakdownTable(monthlyData, maxRows, scenario) {
     var limit = maxRows || DEFAULT_BREAKDOWN_ROWS;
     var tbody = byId('breakdownBody');
     if (!tbody) return;
     tbody.innerHTML = '';
+
+    var breakevenMonth = (scenario === 'b') ? findFeeBreakevenMonth() : null;
 
     var count = Math.min(monthlyData.length, limit);
     for (var i = 0; i < count; i++) {
@@ -511,13 +540,18 @@
       var tr = document.createElement('tr');
 
       var isStartRow = d.month === 0;
+      var isBreakeven = (scenario === 'b' && breakevenMonth != null && d.month === breakevenMonth);
+
       if (isStartRow) {
         tr.style.background = 'rgba(99,102,241,0.08)';
         tr.style.fontWeight = '600';
+      } else if (isBreakeven) {
+        tr.className = 'fee-breakeven-row';
       }
 
-      var monthLabel = isStartRow ? 'התחלה' : d.month;
+      var monthLabel = isStartRow ? 'התחלה' : String(d.month);
       var withdrawalLabel = isStartRow ? '—' : formatCurrency(d.withdrawal);
+      var feeLabel = isStartRow ? '—' : formatCurrency(d.fee || 0);
       var taxLabel = isStartRow
         ? (d.tax > 0 ? '⚡ ' + formatCurrency(d.tax) + ' (מס יציאה)' : '—')
         : formatCurrency(d.tax);
@@ -526,6 +560,7 @@
       var cells = [
         monthLabel,
         withdrawalLabel,
+        feeLabel,
         taxLabel,
         netLabel,
         formatCurrency(d.remainingBalance),
@@ -533,9 +568,19 @@
         formatCurrency(d.cumulativeNet),
       ];
 
-      cells.forEach(function (text) {
+      cells.forEach(function (text, colIndex) {
         var td = document.createElement('td');
-        td.textContent = text;
+        if (colIndex === 0 && isBreakeven) {
+          // Add breakeven badge to the month column
+          var badge = document.createElement('span');
+          badge.className = 'breakeven-badge';
+          badge.title = 'בחודש זה החיסכון המצטבר בדמי הניהול פיצה במלואו על מס היציאה';
+          badge.textContent = '✓ פיצוי מס';
+          td.appendChild(document.createTextNode(text + ' '));
+          td.appendChild(badge);
+        } else {
+          td.textContent = text;
+        }
         tr.appendChild(td);
       });
 
@@ -553,7 +598,7 @@
       btn.className = 'btn-secondary show-more-btn';
       btn.textContent = 'הצג עוד (' + (monthlyData.length - limit) + ' שורות נוספות)';
       btn.addEventListener('click', function () {
-        renderBreakdownTable(monthlyData, monthlyData.length);
+        renderBreakdownTable(monthlyData, monthlyData.length, scenario);
       });
       // Insert after the table-scroll container
       var tableScroll = tbody.closest('.table-scroll');
@@ -641,7 +686,7 @@
     });
 
     // ── Breakdown table (Scenario A by default) ─────────────
-    renderBreakdownTable(resultA.monthlyData);
+    renderBreakdownTable(resultA.monthlyData, null, 'a');
 
     // Reset scenario tabs to A
     $$('.scenario-tab').forEach(function (t) {
