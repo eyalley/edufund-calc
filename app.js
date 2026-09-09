@@ -146,30 +146,33 @@
   //  INPUT MODE TOGGLE  (Summary ↔ Yearly)
   // ══════════════════════════════════════════════════════════════
 
+  function syncInputModeUI() {
+    var toggle = byId('inputModeToggle');
+    var summaryMode = byId('summaryMode');
+    var yearlyMode = byId('yearlyMode');
+    var labelSummary = byId('modeSummaryLabel');
+    var labelYearly = byId('modeYearlyLabel');
+    if (!toggle) return;
+
+    if (toggle.checked) {
+      // Yearly mode
+      if (summaryMode) summaryMode.classList.add('hidden');
+      if (yearlyMode) yearlyMode.classList.remove('hidden');
+      if (labelSummary) labelSummary.classList.remove('active');
+      if (labelYearly) labelYearly.classList.add('active');
+    } else {
+      // Summary mode
+      if (summaryMode) summaryMode.classList.remove('hidden');
+      if (yearlyMode) yearlyMode.classList.add('hidden');
+      if (labelSummary) labelSummary.classList.add('active');
+      if (labelYearly) labelYearly.classList.remove('active');
+    }
+  }
+
   function setupInputModeToggle() {
     var toggle = byId('inputModeToggle');
     if (!toggle) return;
-
-    toggle.addEventListener('change', function () {
-      var summaryMode = byId('summaryMode');
-      var yearlyMode = byId('yearlyMode');
-      var labelSummary = byId('modeSummaryLabel');
-      var labelYearly = byId('modeYearlyLabel');
-
-      if (toggle.checked) {
-        // Yearly mode
-        if (summaryMode) summaryMode.classList.add('hidden');
-        if (yearlyMode) yearlyMode.classList.remove('hidden');
-        if (labelSummary) labelSummary.classList.remove('active');
-        if (labelYearly) labelYearly.classList.add('active');
-      } else {
-        // Summary mode
-        if (summaryMode) summaryMode.classList.remove('hidden');
-        if (yearlyMode) yearlyMode.classList.add('hidden');
-        if (labelSummary) labelSummary.classList.add('active');
-        if (labelYearly) labelYearly.classList.remove('active');
-      }
-    });
+    toggle.addEventListener('change', syncInputModeUI);
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -241,6 +244,9 @@
     tbody.appendChild(createProfitLayerRow('רווח פטור', '', 0));
     tbody.appendChild(createProfitLayerRow('רווח חייב', '', 25));
   }
+
+  // Expose for persistence.js to rebuild profit layer rows on restore
+  window._createProfitLayerRow = createProfitLayerRow;
 
   function setupAddProfitLayer() {
     var btn = byId('addProfitLayer');
@@ -812,6 +818,11 @@
 
     // ── Render ──────────────────────────────────────────────
     renderResults(lastResultA, lastResultB);
+
+    // ── Persist form state so reload restores inputs ────────
+    if (typeof PersistenceManager !== 'undefined') {
+      PersistenceManager.save();
+    }
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -856,25 +867,29 @@
     // 6. Ensure results section starts hidden (HTML has class="hidden")
     // Nothing to do — the class is already in HTML
 
-    // 7. Sync visible mode with actual checkbox state (handles browser-restored state on reload)
-    var toggle = byId('inputModeToggle');
-    var summaryMode = byId('summaryMode');
-    var yearlyMode = byId('yearlyMode');
-    var labelSummary = byId('modeSummaryLabel');
-    var labelYearly = byId('modeYearlyLabel');
+    // 7. Restore state from previous run (if available in localStorage)
+    if (typeof PersistenceManager !== 'undefined') {
+      PersistenceManager.restore(function () {
+        // Callback runs after scalar fields & mode toggle are restored:
+        // Regenerate yearly deposits table with restored startYear and withdrawalYear
+        var sYear = startYearInput ? parseInt(startYearInput.value, 10) : DEFAULT_START_YEAR;
+        var wy = withdrawalYearInput ? parseInt(withdrawalYearInput.value, 10) : CURRENT_YEAR;
+        generateYearlyDepositsTable(sYear, wy);
 
-    if (toggle && toggle.checked) {
-      // Yearly mode is active (browser restored checked state)
-      if (summaryMode) summaryMode.classList.add('hidden');
-      if (yearlyMode) yearlyMode.classList.remove('hidden');
-      if (labelSummary) labelSummary.classList.remove('active');
-      if (labelYearly) labelYearly.classList.add('active');
-    } else {
-      // Summary mode (default)
-      if (summaryMode) summaryMode.classList.remove('hidden');
-      if (yearlyMode) yearlyMode.classList.add('hidden');
-      if (labelSummary) labelSummary.classList.add('active');
-      if (labelYearly) labelYearly.classList.remove('active');
+        // Sync mode view
+        syncInputModeUI();
+      });
     }
+
+    // Always ensure UI mode matches toggle state on load (whether restored or default)
+    syncInputModeUI();
+
+    // 8. Format any restored numeric inputs with thousands separators
+    $$('.number-input').forEach(function (el) {
+      var raw = parseNum(el.value);
+      if (raw) {
+        el.value = formatThousands(raw);
+      }
+    });
   });
 })();
