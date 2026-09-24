@@ -61,7 +61,18 @@ var CalculationEngine = (function () {
   // ---------------------------------------------------------------------------
 
   var MAX_MONTHS = 1200; // 100-year safety cap
-  var TAX_RATE_KEREN = 0.25; // 25% tax on taxable portion of קרן השתלמות profits
+
+  /**
+   * @description שיעור מס רווחי הון על הפקדות מעל התקרה בקרן השתלמות, לפי תקופת ההפקדה.
+   * המס חל על הרווח הריאלי בלבד (אחרי ניכוי אינפלציה).
+   * @param {number} depositYear - שנת ההפקדה
+   * @returns {number} שיעור המס (0-1)
+   */
+  function getTaxRateByYear(depositYear) {
+    if (depositYear <= 2005) return 0.15;  // 15% — הפקדות עד 2005
+    if (depositYear <= 2011) return 0.20;  // 20% — הפקדות 2006–2011
+    return 0.25;                           // 25% — הפקדות 2012 ואילך
+  }
 
   /**
    * @description עיגול לשתי ספרות עשרוניות — מונע בעיות floating-point
@@ -418,12 +429,20 @@ var CalculationEngine = (function () {
           var withdrawFromThis = Math.min(remaining, dep.currentValue);
 
           if (dep.currentValue > dep.principal) {
-            // There IS profit
+            // There IS nominal profit
             var profitRatio = (dep.currentValue - dep.principal) / dep.currentValue;
             var profitPortion = withdrawFromThis * profitRatio;
-            var taxFreeProfit = profitPortion * dep.taxFreeRatio;
-            var taxableProfit = profitPortion * (1 - dep.taxFreeRatio);
-            var tax = taxableProfit * TAX_RATE_KEREN;
+
+            // Real profit: deduct inflationary component (מס על רווח ריאלי בלבד)
+            var yearsHeld = dep.year ? (simYear - dep.year) : 0;
+            var inflationFactor = Math.pow(1 + inflationRate / 100, yearsHeld);
+            var realProfit = Math.max(0, dep.currentValue - dep.principal * inflationFactor);
+            var realProfitPortion = dep.currentValue > 0
+              ? (withdrawFromThis * realProfit / dep.currentValue) : 0;
+
+            var taxableProfit = realProfitPortion * (1 - dep.taxFreeRatio);
+            var taxRate = getTaxRateByYear(dep.year || currentYear);
+            var tax = taxableProfit * taxRate;
             monthTax += tax;
 
             var principalWithdrawn = withdrawFromThis - profitPortion;
@@ -529,9 +548,13 @@ var CalculationEngine = (function () {
       var dep = allDeposits[i];
       if (!dep.year || dep.year <= currentYear) {
         totalValueToday += dep.currentValue;
-        var profit = Math.max(0, dep.currentValue - dep.principal);
-        var taxableProfit = profit * (1 - dep.taxFreeRatio);
-        totalTaxOnA += taxableProfit * TAX_RATE_KEREN;
+        // Real profit: deduct inflationary component (מס על רווח ריאלי בלבד)
+        var yearsHeld = dep.year ? (currentYear - dep.year) : 0;
+        var inflationFactor = Math.pow(1 + inflationRate / 100, yearsHeld);
+        var realProfit = Math.max(0, dep.currentValue - dep.principal * inflationFactor);
+        var taxableProfit = realProfit * (1 - dep.taxFreeRatio);
+        var taxRate = getTaxRateByYear(dep.year || currentYear);
+        totalTaxOnA += taxableProfit * taxRate;
       } else {
         pendingFutureDeposits.push(dep);
       }
@@ -665,7 +688,8 @@ var CalculationEngine = (function () {
     calculateScenarioB: calculateScenarioB,
     calculateDepositCurrentValues: calculateDepositCurrentValues,
     splitDepositByCeiling: splitDepositByCeiling,
-    getHistoricalCeilings: getHistoricalCeilings
+    getHistoricalCeilings: getHistoricalCeilings,
+    getTaxRateByYear: getTaxRateByYear
   };
 
 })();
