@@ -17,6 +17,8 @@ const ChartManager = (function () {
     scenarioAFill: 'rgba(99,102,241,0.10)',
     scenarioB: '#06b6d4',       // cyan
     scenarioBFill: 'rgba(6,182,212,0.10)',
+    scenarioC: '#10b981',       // emerald green
+    scenarioCFill: 'rgba(16,185,129,0.10)',
     warning: '#f59e0b',         // tax / warning
     warningFill: 'rgba(245,158,11,0.15)',
     success: '#10b981',         // net received
@@ -57,10 +59,6 @@ const ChartManager = (function () {
   }
 
   /**
-   * Build X-axis labels that show 'שנה X' every 12 months.
-   * Returns an array of labels the same length as `maxLen`.
-   */
-  /**
    * Build X-axis labels that show 'התחלה' for month 0 and 'שנה X' every 12 months.
    * Returns an array of labels the same length as `maxLen`.
    */
@@ -79,39 +77,48 @@ const ChartManager = (function () {
   }
 
   /**
-   * When datasets differ in length, pad the shorter one with `null`
-   * and return a common set of labels.
+   * When datasets differ in length, pad shorter ones with `null`
+   * and return a common set of labels. Supports 2 or 3 datasets.
    */
-  function alignDatasets(aArr, bArr) {
-    const maxLen = Math.max(aArr.length, bArr.length);
+  function alignDatasets(aArr, bArr, cArr) {
+    cArr = cArr || [];
+    const maxLen = Math.max(aArr.length, bArr.length, cArr.length);
     const a = aArr.slice();
     const b = bArr.slice();
+    const c = cArr.slice();
     while (a.length < maxLen) a.push(null);
     while (b.length < maxLen) b.push(null);
-    return { a, b, labels: buildMonthLabels(maxLen) };
+    while (c.length < maxLen) c.push(null);
+    return { a, b, c, labels: buildMonthLabels(maxLen) };
   }
 
   /**
    * Apply down-sampling to aligned datasets + labels together so indices stay in sync.
    */
-  function prepareLineData(aRaw, bRaw, maxPoints) {
-    const { a, b, labels } = alignDatasets(aRaw, bRaw);
-    if (a.length <= maxPoints) return { a, b, labels };
+  function prepareLineData(aRaw, bRaw, cRaw, maxPoints) {
+    if (typeof cRaw === 'number') {
+      maxPoints = cRaw;
+      cRaw = null;
+    }
+    const { a, b, c, labels } = alignDatasets(aRaw, bRaw, cRaw);
+    if (a.length <= maxPoints) return { a, b, c, labels };
 
     const step = Math.ceil(a.length / maxPoints);
-    const sa = [], sb = [], sl = [];
+    const sa = [], sb = [], sc = [], sl = [];
     for (let i = 0; i < a.length; i += step) {
       sa.push(a[i]);
       sb.push(b[i]);
+      sc.push(c[i]);
       sl.push(labels[i]);
     }
     const last = a.length - 1;
     if (sa.length === 0 || sa[sa.length - 1] !== a[last]) {
       sa.push(a[last]);
       sb.push(b[last]);
+      sc.push(c[last]);
       sl.push(labels[last]);
     }
-    return { a: sa, b: sb, labels: sl };
+    return { a: sa, b: sb, c: sc, labels: sl };
   }
 
   /** Whether animation should be disabled for large datasets */
@@ -194,44 +201,61 @@ const ChartManager = (function () {
   /**
    * 1. Balance Chart (Line) – remaining balance over time.
    */
-  function createBalanceChart(canvasId, scenarioAData, scenarioBData) {
+  function createBalanceChart(canvasId, scenarioAData, scenarioBData, scenarioCData) {
     const ctx = ensureCanvas(canvasId);
     if (!ctx) return;
 
     const aRaw = scenarioAData.map(function (d) { return d.remainingBalance; });
     const bRaw = scenarioBData.map(function (d) { return d.remainingBalance; });
+    const cRaw = scenarioCData ? scenarioCData.map(function (d) { return d.remainingBalance; }) : null;
     const maxPts = 200;
-    const prepared = prepareLineData(aRaw, bRaw, maxPts);
-    const animate = shouldAnimate(Math.max(aRaw.length, bRaw.length));
+    const prepared = prepareLineData(aRaw, bRaw, cRaw, maxPts);
+    const animate = shouldAnimate(Math.max(aRaw.length, bRaw.length, cRaw ? cRaw.length : 0));
+
+    const datasets = [
+      {
+        label: 'תרחיש א׳ – המשך קרן',
+        data: prepared.a,
+        borderColor: COLORS.scenarioA,
+        backgroundColor: COLORS.scenarioAFill,
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        borderWidth: 2,
+        spanGaps: true,
+      },
+      {
+        label: 'תרחיש ב׳ – העברה לכלי חדש',
+        data: prepared.b,
+        borderColor: COLORS.scenarioB,
+        backgroundColor: COLORS.scenarioBFill,
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        borderWidth: 2,
+        spanGaps: true,
+      },
+    ];
+
+    if (scenarioCData) {
+      datasets.push({
+        label: 'תרחיש ג׳ – פיצול תיקים',
+        data: prepared.c,
+        borderColor: COLORS.scenarioC,
+        backgroundColor: COLORS.scenarioCFill,
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        borderWidth: 2,
+        spanGaps: true,
+      });
+    }
 
     const chart = new Chart(ctx, {
       type: 'line',
       data: {
         labels: prepared.labels,
-        datasets: [
-          {
-            label: 'תרחיש א׳ – המשך קרן',
-            data: prepared.a,
-            borderColor: COLORS.scenarioA,
-            backgroundColor: COLORS.scenarioAFill,
-            fill: true,
-            tension: 0.4,
-            pointRadius: 0,
-            borderWidth: 2,
-            spanGaps: true,
-          },
-          {
-            label: 'תרחיש ב׳ – העברה לכלי חדש',
-            data: prepared.b,
-            borderColor: COLORS.scenarioB,
-            backgroundColor: COLORS.scenarioBFill,
-            fill: true,
-            tension: 0.4,
-            pointRadius: 0,
-            borderWidth: 2,
-            spanGaps: true,
-          },
-        ],
+        datasets: datasets,
       },
       options: {
         responsive: true,
@@ -251,44 +275,61 @@ const ChartManager = (function () {
   /**
    * 2. Cumulative Tax Chart (Line) – tax paid over time.
    */
-  function createTaxChart(canvasId, scenarioAData, scenarioBData) {
+  function createTaxChart(canvasId, scenarioAData, scenarioBData, scenarioCData) {
     const ctx = ensureCanvas(canvasId);
     if (!ctx) return;
 
     const aRaw = scenarioAData.map(function (d) { return d.cumulativeTax; });
     const bRaw = scenarioBData.map(function (d) { return d.cumulativeTax; });
+    const cRaw = scenarioCData ? scenarioCData.map(function (d) { return d.cumulativeTax; }) : null;
     const maxPts = 200;
-    const prepared = prepareLineData(aRaw, bRaw, maxPts);
-    const animate = shouldAnimate(Math.max(aRaw.length, bRaw.length));
+    const prepared = prepareLineData(aRaw, bRaw, cRaw, maxPts);
+    const animate = shouldAnimate(Math.max(aRaw.length, bRaw.length, cRaw ? cRaw.length : 0));
+
+    const datasets = [
+      {
+        label: 'מס מצטבר – תרחיש א׳',
+        data: prepared.a,
+        borderColor: COLORS.scenarioA,
+        backgroundColor: COLORS.scenarioAFill,
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        borderWidth: 2,
+        spanGaps: true,
+      },
+      {
+        label: 'מס מצטבר – תרחיש ב׳',
+        data: prepared.b,
+        borderColor: COLORS.warning,
+        backgroundColor: COLORS.warningFill,
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        borderWidth: 2,
+        spanGaps: true,
+      },
+    ];
+
+    if (scenarioCData) {
+      datasets.push({
+        label: 'מס מצטבר – תרחיש ג׳',
+        data: prepared.c,
+        borderColor: COLORS.scenarioC,
+        backgroundColor: COLORS.scenarioCFill,
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        borderWidth: 2,
+        spanGaps: true,
+      });
+    }
 
     const chart = new Chart(ctx, {
       type: 'line',
       data: {
         labels: prepared.labels,
-        datasets: [
-          {
-            label: 'מס מצטבר – תרחיש א׳',
-            data: prepared.a,
-            borderColor: COLORS.scenarioA,
-            backgroundColor: COLORS.scenarioAFill,
-            fill: true,
-            tension: 0.4,
-            pointRadius: 0,
-            borderWidth: 2,
-            spanGaps: true,
-          },
-          {
-            label: 'מס מצטבר – תרחיש ב׳',
-            data: prepared.b,
-            borderColor: COLORS.warning,
-            backgroundColor: COLORS.warningFill,
-            fill: true,
-            tension: 0.4,
-            pointRadius: 0,
-            borderWidth: 2,
-            spanGaps: true,
-          },
-        ],
+        datasets: datasets,
       },
       options: {
         responsive: true,
@@ -308,44 +349,61 @@ const ChartManager = (function () {
   /**
    * 3. Cumulative Net Received Chart (Line).
    */
-  function createNetChart(canvasId, scenarioAData, scenarioBData) {
+  function createNetChart(canvasId, scenarioAData, scenarioBData, scenarioCData) {
     const ctx = ensureCanvas(canvasId);
     if (!ctx) return;
 
     const aRaw = scenarioAData.map(function (d) { return d.cumulativeNet; });
     const bRaw = scenarioBData.map(function (d) { return d.cumulativeNet; });
+    const cRaw = scenarioCData ? scenarioCData.map(function (d) { return d.cumulativeNet; }) : null;
     const maxPts = 200;
-    const prepared = prepareLineData(aRaw, bRaw, maxPts);
-    const animate = shouldAnimate(Math.max(aRaw.length, bRaw.length));
+    const prepared = prepareLineData(aRaw, bRaw, cRaw, maxPts);
+    const animate = shouldAnimate(Math.max(aRaw.length, bRaw.length, cRaw ? cRaw.length : 0));
+
+    const datasets = [
+      {
+        label: 'נטו מצטבר – תרחיש א׳',
+        data: prepared.a,
+        borderColor: COLORS.scenarioA,
+        backgroundColor: COLORS.scenarioAFill,
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        borderWidth: 2,
+        spanGaps: true,
+      },
+      {
+        label: 'נטו מצטבר – תרחיש ב׳',
+        data: prepared.b,
+        borderColor: COLORS.scenarioB,
+        backgroundColor: COLORS.scenarioBFill,
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        borderWidth: 2,
+        spanGaps: true,
+      },
+    ];
+
+    if (scenarioCData) {
+      datasets.push({
+        label: 'נטו מצטבר – תרחיש ג׳',
+        data: prepared.c,
+        borderColor: COLORS.scenarioC,
+        backgroundColor: COLORS.scenarioCFill,
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        borderWidth: 2,
+        spanGaps: true,
+      });
+    }
 
     const chart = new Chart(ctx, {
       type: 'line',
       data: {
         labels: prepared.labels,
-        datasets: [
-          {
-            label: 'נטו מצטבר – תרחיש א׳',
-            data: prepared.a,
-            borderColor: COLORS.scenarioA,
-            backgroundColor: COLORS.scenarioAFill,
-            fill: true,
-            tension: 0.4,
-            pointRadius: 0,
-            borderWidth: 2,
-            spanGaps: true,
-          },
-          {
-            label: 'נטו מצטבר – תרחיש ב׳',
-            data: prepared.b,
-            borderColor: COLORS.success,
-            backgroundColor: COLORS.successFill,
-            fill: true,
-            tension: 0.4,
-            pointRadius: 0,
-            borderWidth: 2,
-            spanGaps: true,
-          },
-        ],
+        datasets: datasets,
       },
       options: {
         responsive: true,
@@ -365,33 +423,43 @@ const ChartManager = (function () {
   /**
    * 4. Tax Breakdown Chart (Doughnut) – net vs tax per scenario.
    */
-  function createBreakdownChart(canvasId, scenarioASummary, scenarioBSummary) {
+  function createBreakdownChart(canvasId, scenarioASummary, scenarioBSummary, scenarioCSummary) {
     const ctx = ensureCanvas(canvasId);
     if (!ctx) return;
+
+    const labels = [
+      'נטו – תרחיש א׳',
+      'מס – תרחיש א׳',
+      'נטו – תרחיש ב׳',
+      'מס – תרחיש ב׳',
+    ];
+    const data = [
+      scenarioASummary.totalNetReceived,
+      scenarioASummary.totalTax,
+      scenarioBSummary.totalNetReceived,
+      scenarioBSummary.totalTax,
+    ];
+    const bgColors = [
+      COLORS.scenarioA,
+      COLORS.warning,
+      COLORS.scenarioB,
+      'rgba(245,158,11,0.5)',
+    ];
+
+    if (scenarioCSummary) {
+      labels.push('נטו – תרחיש ג׳', 'מס – תרחיש ג׳');
+      data.push(scenarioCSummary.totalNetReceived, scenarioCSummary.totalTax);
+      bgColors.push(COLORS.scenarioC, 'rgba(16,185,129,0.5)');
+    }
 
     const chart = new Chart(ctx, {
       type: 'doughnut',
       data: {
-        labels: [
-          'נטו – תרחיש א׳',
-          'מס – תרחיש א׳',
-          'נטו – תרחיש ב׳',
-          'מס – תרחיש ב׳',
-        ],
+        labels: labels,
         datasets: [
           {
-            data: [
-              scenarioASummary.totalNetReceived,
-              scenarioASummary.totalTax,
-              scenarioBSummary.totalNetReceived,
-              scenarioBSummary.totalTax,
-            ],
-            backgroundColor: [
-              COLORS.scenarioA,
-              COLORS.warning,
-              COLORS.scenarioB,
-              'rgba(245,158,11,0.5)',
-            ],
+            data: data,
+            backgroundColor: bgColors,
             borderColor: 'rgba(0,0,0,0.3)',
             borderWidth: 1,
           },

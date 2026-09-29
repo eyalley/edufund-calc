@@ -680,12 +680,274 @@ var CalculationEngine = (function () {
   }
 
   // ---------------------------------------------------------------------------
+  // Scenario C — Split portfolios: redeem taxable part to Tool B, keep exempt in Tool A
+  // ---------------------------------------------------------------------------
+
+  /**
+   * @description תרחיש ג׳ — פיצול תיקים: פדיון החלק החייב בלבד, תשלום מס יציאה והפקדתו בתיק מסחר.
+   * החלק הפטור נותר בקרן ההשתלמות (100% פטור ממס). שני התיקים מנוהלים במקביל.
+   * משיכה חודשית נמשכת קודם מתיק המסחר עד למיצויו, ולאחר מכן מקרן ההשתלמות.
+   * @param {CalculationParams} params
+   * @returns {ScenarioResult}
+   */
+  function calculateScenarioC(params) {
+    var allDeposits = cloneDeposits(params.deposits);
+    var baseWithdrawal = params.monthlyWithdrawal;
+    var inflationRate = (params.inflationRate != null) ? params.inflationRate : 2;
+    var currentYear = params.currentYear || 2026;
+    var withdrawalYear = params.withdrawalYear || currentYear;
+    var growthMonths = Math.max(0, (withdrawalYear - currentYear) * 12);
+
+    var annualGrowth = params.annualGrowth;
+    var annualFee = params.annualFee;
+    var mgrA = monthlyGrowthRate(annualGrowth);
+    var mfrA = monthlyFeeFraction(annualFee);
+
+    var toolBGrowth = params.toolBGrowth;
+    var toolBFee = params.toolBFee;
+    var toolBTaxRate = params.toolBTaxRate;
+    var mgrB = monthlyGrowthRate(toolBGrowth);
+    var mfrB = monthlyFeeFraction(toolBFee);
+
+    // Edge case: no deposits or zero withdrawal
+    if (!allDeposits || allDeposits.length === 0 || baseWithdrawal <= 0) {
+      return {
+        monthlyData: [],
+        summary: {
+          totalTax: 0,
+          totalNetReceived: 0,
+          totalWithdrawn: 0,
+          monthsToExhaustion: 0,
+          effectiveTaxRate: 0
+        }
+      };
+    }
+
+    // --- Step 1: Initial Split at Month 0 (currentYear) ---
+    var activeDepositsA = [];
+    var pendingDepositsA = [];
+    var totalTaxableValueToday = 0;
+    var totalExitTax = 0;
+
+    for (var i = 0; i < allDeposits.length; i++) {
+      var dep = allDeposits[i];
+      if (!dep.year || dep.year <= currentYear) {
+        var exemptRatio = dep.taxFreeRatio;
+        var taxableRatio = 1 - exemptRatio;
+
+        // Exempt portion remains in Tool A
+        if (exemptRatio > 0 && dep.currentValue > 0) {
+          activeDepositsA.push({
+            principal: dep.principal * exemptRatio,
+            currentValue: dep.currentValue * exemptRatio,
+            taxFreeRatio: 1.0, // 100% tax free from now on
+            year: dep.year
+          });
+        }
+
+        // Taxable portion is redeemed now
+        if (taxableRatio > 0 && dep.currentValue > 0) {
+          var portionValue = dep.currentValue * taxableRatio;
+          var portionPrincipal = dep.principal * taxableRatio;
+          totalTaxableValueToday += portionValue;
+
+          var yearsHeld = dep.year ? (currentYear - dep.year) : 0;
+          var inflationFactor = Math.pow(1 + inflationRate / 100, yearsHeld);
+          var realProfit = Math.max(0, portionValue - portionPrincipal * inflationFactor);
+          var taxRate = getTaxRateByYear(dep.year || currentYear);
+          totalExitTax += realProfit * taxRate;
+        }
+      } else {
+        // Future planned deposits remain for Tool A
+        pendingDepositsA.push(dep);
+      }
+    }
+
+    totalExitTax = round2(totalExitTax);
+    var netProceeds = round2(totalTaxableValueToday - totalExitTax);
+
+    var toolBPrincipal = netProceeds;
+    var toolBCurrentValue = netProceeds;
+
+    var month = 0;
+    var cumulativeTax = totalExitTax;
+    var cumulativeNet = 0;
+    var cumulativeWithdrawal = 0;
+
+    var monthlyData = [];
+
+    // Push Month 0 starting point
+    var initialBalanceTotal = round2(totalCurrentValue(activeDepositsA) + toolBCurrentValue);
+    monthlyData.push({
+      month: 0,
+      withdrawal: 0,
+      fee: 0,
+      tax: totalExitTax,
+      netReceived: 0,
+      remainingBalance: initialBalanceTotal,
+      cumulativeTax: totalExitTax,
+      cumulativeNet: 0,
+      cumulativeWithdrawal: 0
+    });
+
+    while ((totalCurrentValue(activeDepositsA) > 0.01 || toolBCurrentValue > 0.01 || pendingDepositsA.length > 0) && month < MAX_MONTHS) {
+
+      var simYear = currentYear + Math.floor(month / 12);
+      var simMonthInYear = month % 12;
+
+      // Add future planned deposits into Tool A
+      if (simMonthInYear === 0 && pendingDepositsA.length > 0) {
+        for (var pIdx = pendingDepositsA.length - 1; pIdx >= 0; pIdx--) {
+          if (pendingDepositsA[pIdx].year === simYear) {
+            var newDep = pendingDepositsA.splice(pIdx, 1)[0];
+            newDep.currentValue = newDep.principal;
+            activeDepositsA.push(newDep);
+          }
+        }
+      }
+
+      // --- 1. Growth ---
+      // Tool A
+      for (var aIdx = 0; aIdx < activeDepositsA.length; aIdx++) {
+        activeDepositsA[aIdx].currentValue *= (1 + mgrA);
+      }
+      // Tool B
+      if (toolBCurrentValue > 0) {
+        toolBCurrentValue *= (1 + mgrB);
+      }
+
+      // --- 2. Management Fees ---
+      // Tool A fee
+      var feeA = 0;
+      for (var fIdx = 0; fIdx < activeDepositsA.length; fIdx++) {
+        var f = activeDepositsA[fIdx].currentValue * mfrA;
+        feeA += f;
+        activeDepositsA[fIdx].currentValue -= f;
+      }
+      // Tool B fee
+      var feeB = 0;
+      if (toolBCurrentValue > 0) {
+        feeB = toolBCurrentValue * mfrB;
+        toolBCurrentValue -= feeB;
+        if (toolBCurrentValue < 0) toolBCurrentValue = 0;
+      }
+      var monthTotalFee = feeA + feeB;
+
+      // --- 3. Withdrawals ---
+      var isWithdrawalPhase = month >= growthMonths;
+      var actualWithdrawal = 0;
+      var monthTax = 0;
+      var netReceived = 0;
+
+      if (isWithdrawalPhase && (toolBCurrentValue > 0 || activeDepositsA.length > 0)) {
+        var targetWithdrawal = inflationAdjustedWithdrawal(baseWithdrawal, month, inflationRate);
+        var remainingTarget = targetWithdrawal;
+
+        // 3a. Withdraw from Tool B first
+        if (toolBCurrentValue > 0 && remainingTarget > 0.001) {
+          var fromB = Math.min(remainingTarget, toolBCurrentValue);
+          if (toolBCurrentValue > toolBPrincipal) {
+            var profitRatioB = (toolBCurrentValue - toolBPrincipal) / toolBCurrentValue;
+            var profitPortionB = fromB * profitRatioB;
+            var taxB = profitPortionB * (toolBTaxRate / 100);
+            monthTax += taxB;
+            toolBPrincipal -= fromB * (1 - profitRatioB);
+          } else {
+            toolBPrincipal -= fromB;
+          }
+          toolBCurrentValue -= fromB;
+          if (toolBCurrentValue < 0.01) toolBCurrentValue = 0;
+          if (toolBPrincipal < 0.01) toolBPrincipal = 0;
+
+          actualWithdrawal += fromB;
+          remainingTarget -= fromB;
+        }
+
+        // 3b. If Tool B exhausted / insufficient, withdraw from Tool A
+        while (remainingTarget > 0.001 && activeDepositsA.length > 0) {
+          var depA = activeDepositsA[0];
+          var fromA = Math.min(remainingTarget, depA.currentValue);
+
+          if (depA.currentValue > depA.principal) {
+            var profitRatioA = (depA.currentValue - depA.principal) / depA.currentValue;
+            var profitPortionA = fromA * profitRatioA;
+
+            var yearsHeldA = depA.year ? (simYear - depA.year) : 0;
+            var inflationFactorA = Math.pow(1 + inflationRate / 100, yearsHeldA);
+            var realProfitA = Math.max(0, depA.currentValue - depA.principal * inflationFactorA);
+            var realProfitPortionA = depA.currentValue > 0
+              ? (fromA * realProfitA / depA.currentValue) : 0;
+
+            var taxableProfitA = realProfitPortionA * (1 - depA.taxFreeRatio);
+            var taxRateA = getTaxRateByYear(depA.year || currentYear);
+            var taxA = taxableProfitA * taxRateA;
+            monthTax += taxA;
+
+            var principalWithdrawnA = fromA - profitPortionA;
+            depA.principal -= principalWithdrawnA;
+            depA.currentValue -= fromA;
+          } else {
+            depA.principal -= fromA;
+            depA.currentValue -= fromA;
+          }
+
+          if (depA.currentValue <= 0.01) {
+            activeDepositsA.shift();
+          }
+
+          actualWithdrawal += fromA;
+          remainingTarget -= fromA;
+        }
+
+        actualWithdrawal = round2(actualWithdrawal);
+        monthTax = round2(monthTax);
+        netReceived = round2(actualWithdrawal - monthTax);
+        cumulativeTax += monthTax;
+        cumulativeNet += netReceived;
+        cumulativeWithdrawal += actualWithdrawal;
+      }
+
+      var totalRemainingBalance = round2(totalCurrentValue(activeDepositsA) + toolBCurrentValue);
+
+      monthlyData.push({
+        month: month + 1,
+        withdrawal: actualWithdrawal,
+        fee: round2(monthTotalFee),
+        tax: monthTax,
+        netReceived: netReceived,
+        remainingBalance: totalRemainingBalance,
+        cumulativeTax: round2(cumulativeTax),
+        cumulativeNet: round2(cumulativeNet),
+        cumulativeWithdrawal: round2(cumulativeWithdrawal)
+      });
+
+      month++;
+    }
+
+    var totalWithdrawn = round2(cumulativeWithdrawal);
+
+    return {
+      monthlyData: monthlyData,
+      summary: {
+        totalTax: round2(cumulativeTax),
+        totalNetReceived: round2(cumulativeNet),
+        totalWithdrawn: totalWithdrawn,
+        monthsToExhaustion: month,
+        effectiveTaxRate: totalWithdrawn > 0
+          ? round2(cumulativeTax / totalWithdrawn * 100)
+          : 0
+      }
+    };
+  }
+
+  // ---------------------------------------------------------------------------
   // Public API
   // ---------------------------------------------------------------------------
 
   return {
     calculateScenarioA: calculateScenarioA,
     calculateScenarioB: calculateScenarioB,
+    calculateScenarioC: calculateScenarioC,
     calculateDepositCurrentValues: calculateDepositCurrentValues,
     splitDepositByCeiling: splitDepositByCeiling,
     getHistoricalCeilings: getHistoricalCeilings,

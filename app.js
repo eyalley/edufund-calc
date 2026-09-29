@@ -14,6 +14,7 @@
   // ── Cached scenario results ─────────────────────────────────
   var lastResultA = null;
   var lastResultB = null;
+  var lastResultC = null;
 
   // ══════════════════════════════════════════════════════════════
   //  UTILITY FUNCTIONS
@@ -491,6 +492,8 @@
         renderBreakdownTable(lastResultA.monthlyData, null, 'a');
       } else if (scenario === 'b' && lastResultB) {
         renderBreakdownTable(lastResultB.monthlyData, null, 'b');
+      } else if (scenario === 'c' && lastResultC) {
+        renderBreakdownTable(lastResultC.monthlyData, null, 'c');
       }
     });
   }
@@ -613,9 +616,10 @@
   //  RENDER RESULTS
   // ══════════════════════════════════════════════════════════════
 
-  function renderResults(resultA, resultB) {
+  function renderResults(resultA, resultB, resultC) {
     var sa = resultA.summary;
     var sb = resultB.summary;
+    var sc = resultC ? resultC.summary : null;
 
     // ── Summary cards for Scenario A ────────────────────────
     setTextIfExists('scenarioATax', formatCurrency(sa.totalTax));
@@ -629,35 +633,54 @@
     setTextIfExists('scenarioBMonths', formatMonths(sb.monthsToExhaustion));
     setTextIfExists('scenarioBEffRate', formatPercent(sb.effectiveTaxRate));
 
+    // ── Summary cards for Scenario C ────────────────────────
+    if (sc) {
+      setTextIfExists('scenarioCTax', formatCurrency(sc.totalTax));
+      setTextIfExists('scenarioCNet', formatCurrency(sc.totalNetReceived));
+      setTextIfExists('scenarioCMonths', formatMonths(sc.monthsToExhaustion));
+      setTextIfExists('scenarioCEffRate', formatPercent(sc.effectiveTaxRate));
+    }
+
     // ── Winner badge ────────────────────────────────────────
     var winnerBadge = byId('winnerBadge');
-    var diff = sa.totalNetReceived - sb.totalNetReceived;
+    var scenarios = [
+      { name: 'תרחיש א׳', id: 'a', net: sa.totalNetReceived, tax: sa.totalTax, months: sa.monthsToExhaustion, color: '', bg: '', border: '' },
+      { name: 'תרחיש ב׳', id: 'b', net: sb.totalNetReceived, tax: sb.totalTax, months: sb.monthsToExhaustion, color: 'var(--accent-b)', bg: 'rgba(6, 182, 212, 0.15)', border: 'rgba(6, 182, 212, 0.3)' }
+    ];
+    if (sc) {
+      scenarios.push({
+        name: 'תרחיש ג׳', id: 'c', net: sc.totalNetReceived, tax: sc.totalTax, months: sc.monthsToExhaustion,
+        color: 'var(--accent-c)', bg: 'rgba(16, 185, 129, 0.15)', border: 'rgba(16, 185, 129, 0.3)'
+      });
+    }
+
+    scenarios.sort(function (x, y) { return y.net - x.net; });
+    var winner = scenarios[0];
+    var runnerUp = scenarios[1];
+    var diff = winner.net - runnerUp.net;
 
     if (winnerBadge) {
-      if (diff > 0) {
-        winnerBadge.textContent = '✦ תרחיש א׳ עדיף – חיסכון של ' + formatCurrency(diff);
+      if (diff > 0.01) {
+        winnerBadge.textContent = '✦ ' + winner.name + ' עדיף – תוספת נטו של ' + formatCurrency(diff);
+        winnerBadge.style.color = winner.color;
+        winnerBadge.style.background = winner.bg;
+        winnerBadge.style.borderColor = winner.border;
+      } else {
+        winnerBadge.textContent = '✦ שוויון כמעט מושלם!';
         winnerBadge.style.color = '';
         winnerBadge.style.background = '';
         winnerBadge.style.borderColor = '';
-      } else if (diff < 0) {
-        winnerBadge.textContent = '✦ תרחיש ב׳ עדיף – חיסכון של ' + formatCurrency(Math.abs(diff));
-        winnerBadge.style.color = 'var(--accent-b)';
-        winnerBadge.style.background = 'rgba(6, 182, 212, 0.15)';
-        winnerBadge.style.borderColor = 'rgba(6, 182, 212, 0.3)';
-      } else {
-        winnerBadge.textContent = '✦ שוויון מושלם!';
       }
     }
 
     // ── Difference card ─────────────────────────────────────
-    setTextIfExists('diffTax', formatCurrency(Math.abs(sa.totalTax - sb.totalTax)));
-    setTextIfExists('diffNet', formatCurrency(Math.abs(sa.totalNetReceived - sb.totalNetReceived)));
-    setTextIfExists('diffMonths', Math.abs((sa.monthsToExhaustion || 0) - (sb.monthsToExhaustion || 0)) + ' חודשים');
+    setTextIfExists('diffTax', formatCurrency(Math.abs(winner.tax - runnerUp.tax)));
+    setTextIfExists('diffNet', formatCurrency(Math.abs(diff)));
+    setTextIfExists('diffMonths', Math.abs((winner.months || 0) - (runnerUp.months || 0)) + ' חודשים');
 
     var diffBreakevenContainer = byId('diffBreakevenContainer');
     if (diffBreakevenContainer) {
-      if (diff < 0) {
-        // Scenario B is preferred
+      if (winner.id === 'b') {
         var breakevenM = findFeeBreakevenMonth();
         if (breakevenM != null) {
           setTextIfExists('diffBreakeven', breakevenM + ' חודשים');
@@ -682,10 +705,10 @@
     });
 
     ChartManager.destroyAll();
-    ChartManager.createBalanceChart('balanceChart', resultA.monthlyData, resultB.monthlyData);
-    ChartManager.createTaxChart('taxChart', resultA.monthlyData, resultB.monthlyData);
-    ChartManager.createNetChart('netChart', resultA.monthlyData, resultB.monthlyData);
-    ChartManager.createBreakdownChart('breakdownChart', sa, sb);
+    ChartManager.createBalanceChart('balanceChart', resultA.monthlyData, resultB.monthlyData, resultC ? resultC.monthlyData : null);
+    ChartManager.createTaxChart('taxChart', resultA.monthlyData, resultB.monthlyData, resultC ? resultC.monthlyData : null);
+    ChartManager.createNetChart('netChart', resultA.monthlyData, resultB.monthlyData, resultC ? resultC.monthlyData : null);
+    ChartManager.createBreakdownChart('breakdownChart', sa, sb, sc);
 
     // Hide non-active canvases (balance is shown by default)
     ['taxChart', 'netChart', 'breakdownChart'].forEach(function (id) {
@@ -876,9 +899,10 @@
     // ── Run calculations ────────────────────────────────────
     lastResultA = CalculationEngine.calculateScenarioA(paramsA);
     lastResultB = CalculationEngine.calculateScenarioB(paramsB);
+    lastResultC = CalculationEngine.calculateScenarioC(paramsB);
 
     // ── Render ──────────────────────────────────────────────
-    renderResults(lastResultA, lastResultB);
+    renderResults(lastResultA, lastResultB, lastResultC);
 
     // ── Persist form state so reload restores inputs ────────
     if (typeof PersistenceManager !== 'undefined') {
