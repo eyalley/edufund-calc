@@ -544,12 +544,15 @@
 
       var isStartRow = d.month === 0;
       var isBreakeven = (scenario === 'b' && breakevenMonth != null && d.month === breakevenMonth);
+      var isTransition = (scenario === 'c' && d.isTransitionMonth === true);
 
       if (isStartRow) {
         tr.style.background = 'rgba(99,102,241,0.08)';
         tr.style.fontWeight = '600';
       } else if (isBreakeven) {
         tr.className = 'fee-breakeven-row';
+      } else if (isTransition) {
+        tr.className = 'scenario-c-transition-row';
       }
 
       var monthLabel = isStartRow ? 'התחלה' : String(d.month);
@@ -571,6 +574,26 @@
         formatCurrency(d.cumulativeNet),
       ];
 
+      // Pre-compute Scenario C tooltip titles for combined columns
+      var tooltips = [null, null, null, null, null, null, null, null];
+      if (scenario === 'c' && d.breakdown) {
+        var bd = d.breakdown;
+        var fmt = formatCurrency;
+        if (!isStartRow) {
+          tooltips[1] = 'תיק מסחר (ב׳): ' + fmt(bd.withdrawalB || 0) + '\nקרן השתלמות (א׳): ' + fmt(bd.withdrawalA || 0);
+          tooltips[2] = 'תיק מסחר (ב׳): ' + fmt(bd.feeB || 0) + '\nקרן השתלמות (א׳): ' + fmt(bd.feeA || 0);
+          tooltips[3] = 'תיק מסחר (ב׳): ' + fmt(bd.taxB || 0) + '\nקרן השתלמות (א׳): ' + fmt(bd.taxA || 0);
+          tooltips[4] = 'תיק מסחר (ב׳): ' + fmt(bd.netB || 0) + '\nקרן השתלמות (א׳): ' + fmt(bd.netA || 0);
+          tooltips[5] = 'תיק מסחר (ב׳): ' + fmt(bd.balanceB || 0) + '\nקרן השתלמות (א׳): ' + fmt(bd.balanceA || 0);
+        } else {
+          // Month 0: initial split
+          tooltips[5] = 'תיק מסחר (ב׳): ' + fmt(bd.balanceB || 0) + '\nקרן השתלמות (א׳): ' + fmt(bd.balanceA || 0);
+          if (bd.taxB) {
+            tooltips[3] = 'מס יציאה תיק מסחר (ב׳): ' + fmt(bd.taxB);
+          }
+        }
+      }
+
       cells.forEach(function (text, colIndex) {
         var td = document.createElement('td');
         if (colIndex === 0 && isBreakeven) {
@@ -581,8 +604,21 @@
           badge.textContent = '✓ פיצוי מס';
           td.appendChild(document.createTextNode(text + ' '));
           td.appendChild(badge);
+        } else if (colIndex === 0 && isTransition) {
+          // Add transition badge to the month column
+          var tbadge = document.createElement('span');
+          tbadge.className = 'transition-badge';
+          tbadge.title = 'החל מחודש זה המשיכות מגיעות מקרן ההשתלמות';
+          tbadge.textContent = '⬇ קרן השתלמות';
+          td.appendChild(document.createTextNode(text + ' '));
+          td.appendChild(tbadge);
         } else {
           td.textContent = text;
+        }
+        // Attach native tooltip if available
+        if (tooltips[colIndex]) {
+          td.title = tooltips[colIndex];
+          td.style.cursor = 'help';
         }
         tr.appendChild(td);
       });

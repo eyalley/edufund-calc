@@ -768,6 +768,8 @@ var CalculationEngine = (function () {
 
     var toolBPrincipal = netProceeds;
     var toolBCurrentValue = netProceeds;
+    var hadToolBFunds = (toolBCurrentValue > 0);
+    var transitionMarked = false;
 
     var month = 0;
     var cumulativeTax = totalExitTax;
@@ -787,7 +789,20 @@ var CalculationEngine = (function () {
       remainingBalance: initialBalanceTotal,
       cumulativeTax: totalExitTax,
       cumulativeNet: 0,
-      cumulativeWithdrawal: 0
+      cumulativeWithdrawal: 0,
+      isTransitionMonth: false,
+      breakdown: {
+        withdrawalB: 0,
+        withdrawalA: 0,
+        feeB: 0,
+        feeA: 0,
+        balanceB: round2(toolBCurrentValue),
+        balanceA: round2(totalCurrentValue(activeDepositsA)),
+        taxB: totalExitTax,
+        taxA: 0,
+        netB: 0,
+        netA: 0
+      }
     });
 
     while ((totalCurrentValue(activeDepositsA) > 0.01 || toolBCurrentValue > 0.01 || pendingDepositsA.length > 0) && month < MAX_MONTHS) {
@@ -838,6 +853,10 @@ var CalculationEngine = (function () {
       var actualWithdrawal = 0;
       var monthTax = 0;
       var netReceived = 0;
+      var fromB = 0;
+      var fromA = 0;
+      var taxB = 0;
+      var taxA = 0;
 
       if (isWithdrawalPhase && (toolBCurrentValue > 0 || activeDepositsA.length > 0)) {
         var targetWithdrawal = inflationAdjustedWithdrawal(baseWithdrawal, month, inflationRate);
@@ -845,11 +864,11 @@ var CalculationEngine = (function () {
 
         // 3a. Withdraw from Tool B first
         if (toolBCurrentValue > 0 && remainingTarget > 0.001) {
-          var fromB = Math.min(remainingTarget, toolBCurrentValue);
+          fromB = Math.min(remainingTarget, toolBCurrentValue);
           if (toolBCurrentValue > toolBPrincipal) {
             var profitRatioB = (toolBCurrentValue - toolBPrincipal) / toolBCurrentValue;
             var profitPortionB = fromB * profitRatioB;
-            var taxB = profitPortionB * (toolBTaxRate / 100);
+            taxB = profitPortionB * (toolBTaxRate / 100);
             monthTax += taxB;
             toolBPrincipal -= fromB * (1 - profitRatioB);
           } else {
@@ -866,37 +885,39 @@ var CalculationEngine = (function () {
         // 3b. If Tool B exhausted / insufficient, withdraw from Tool A
         while (remainingTarget > 0.001 && activeDepositsA.length > 0) {
           var depA = activeDepositsA[0];
-          var fromA = Math.min(remainingTarget, depA.currentValue);
+          var pullA = Math.min(remainingTarget, depA.currentValue);
 
           if (depA.currentValue > depA.principal) {
             var profitRatioA = (depA.currentValue - depA.principal) / depA.currentValue;
-            var profitPortionA = fromA * profitRatioA;
+            var profitPortionA = pullA * profitRatioA;
 
             var yearsHeldA = depA.year ? (simYear - depA.year) : 0;
             var inflationFactorA = Math.pow(1 + inflationRate / 100, yearsHeldA);
             var realProfitA = Math.max(0, depA.currentValue - depA.principal * inflationFactorA);
             var realProfitPortionA = depA.currentValue > 0
-              ? (fromA * realProfitA / depA.currentValue) : 0;
+              ? (pullA * realProfitA / depA.currentValue) : 0;
 
             var taxableProfitA = realProfitPortionA * (1 - depA.taxFreeRatio);
             var taxRateA = getTaxRateByYear(depA.year || currentYear);
-            var taxA = taxableProfitA * taxRateA;
-            monthTax += taxA;
+            var pullTaxA = taxableProfitA * taxRateA;
+            taxA += pullTaxA;
+            monthTax += pullTaxA;
 
-            var principalWithdrawnA = fromA - profitPortionA;
+            var principalWithdrawnA = pullA - profitPortionA;
             depA.principal -= principalWithdrawnA;
-            depA.currentValue -= fromA;
+            depA.currentValue -= pullA;
           } else {
-            depA.principal -= fromA;
-            depA.currentValue -= fromA;
+            depA.principal -= pullA;
+            depA.currentValue -= pullA;
           }
 
           if (depA.currentValue <= 0.01) {
             activeDepositsA.shift();
           }
 
-          actualWithdrawal += fromA;
-          remainingTarget -= fromA;
+          fromA += pullA;
+          actualWithdrawal += pullA;
+          remainingTarget -= pullA;
         }
 
         actualWithdrawal = round2(actualWithdrawal);
@@ -909,6 +930,12 @@ var CalculationEngine = (function () {
 
       var totalRemainingBalance = round2(totalCurrentValue(activeDepositsA) + toolBCurrentValue);
 
+      var isTransitionMonth = false;
+      if (hadToolBFunds && !transitionMarked && isWithdrawalPhase && fromA > 0) {
+        isTransitionMonth = true;
+        transitionMarked = true;
+      }
+
       monthlyData.push({
         month: month + 1,
         withdrawal: actualWithdrawal,
@@ -918,7 +945,20 @@ var CalculationEngine = (function () {
         remainingBalance: totalRemainingBalance,
         cumulativeTax: round2(cumulativeTax),
         cumulativeNet: round2(cumulativeNet),
-        cumulativeWithdrawal: round2(cumulativeWithdrawal)
+        cumulativeWithdrawal: round2(cumulativeWithdrawal),
+        isTransitionMonth: isTransitionMonth,
+        breakdown: {
+          withdrawalB: round2(fromB),
+          withdrawalA: round2(fromA),
+          feeB: round2(feeB),
+          feeA: round2(feeA),
+          balanceB: round2(toolBCurrentValue),
+          balanceA: round2(totalCurrentValue(activeDepositsA)),
+          taxB: round2(taxB),
+          taxA: round2(taxA),
+          netB: round2(fromB - taxB),
+          netA: round2(fromA - taxA)
+        }
       });
 
       month++;
