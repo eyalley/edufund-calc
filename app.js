@@ -490,10 +490,13 @@
       var scenario = tab.getAttribute('data-scenario');
       if (scenario === 'a' && lastResultA) {
         renderBreakdownTable(lastResultA.monthlyData, null, 'a');
+        initStickyBreakdownHeader();
       } else if (scenario === 'b' && lastResultB) {
         renderBreakdownTable(lastResultB.monthlyData, null, 'b');
+        initStickyBreakdownHeader();
       } else if (scenario === 'c' && lastResultC) {
         renderBreakdownTable(lastResultC.monthlyData, null, 'c');
+        initStickyBreakdownHeader();
       }
     });
   }
@@ -652,28 +655,42 @@
   //  RENDER RESULTS
   // ══════════════════════════════════════════════════════════════
 
-  function renderResults(resultA, resultB, resultC) {
+  function renderResults(resultA, resultB, resultC, currentAge, lifeExpectancy) {
     var sa = resultA.summary;
     var sb = resultB.summary;
     var sc = resultC ? resultC.summary : null;
 
+    currentAge = currentAge || parseNum(byId('currentAge') ? byId('currentAge').value : 49) || 49;
+    lifeExpectancy = lifeExpectancy || parseNum(byId('lifeExpectancy') ? byId('lifeExpectancy').value : 90) || 90;
+    var monthsToLifeExpectancy = Math.max(0, (lifeExpectancy - currentAge) * 12);
+
+    function setExhaustionText(id, months) {
+      var el = byId(id);
+      if (!el) return;
+      el.textContent = formatMonths(months);
+      if (months !== Infinity && months != null && currentAge) {
+        var endAge = currentAge + Math.floor(months / 12);
+        el.title = 'עד גיל ' + endAge + ' (תוחלת חיים צפויה: ' + lifeExpectancy + ')';
+      }
+    }
+
     // ── Summary cards for Scenario A ────────────────────────
     setTextIfExists('scenarioATax', formatCurrency(sa.totalTax));
     setTextIfExists('scenarioANet', formatCurrency(sa.totalNetReceived));
-    setTextIfExists('scenarioAMonths', formatMonths(sa.monthsToExhaustion));
+    setExhaustionText('scenarioAMonths', sa.monthsToExhaustion);
     setTextIfExists('scenarioAEffRate', formatPercent(sa.effectiveTaxRate));
 
     // ── Summary cards for Scenario B ────────────────────────
     setTextIfExists('scenarioBTax', formatCurrency(sb.totalTax));
     setTextIfExists('scenarioBNet', formatCurrency(sb.totalNetReceived));
-    setTextIfExists('scenarioBMonths', formatMonths(sb.monthsToExhaustion));
+    setExhaustionText('scenarioBMonths', sb.monthsToExhaustion);
     setTextIfExists('scenarioBEffRate', formatPercent(sb.effectiveTaxRate));
 
     // ── Summary cards for Scenario C ────────────────────────
     if (sc) {
       setTextIfExists('scenarioCTax', formatCurrency(sc.totalTax));
       setTextIfExists('scenarioCNet', formatCurrency(sc.totalNetReceived));
-      setTextIfExists('scenarioCMonths', formatMonths(sc.monthsToExhaustion));
+      setExhaustionText('scenarioCMonths', sc.monthsToExhaustion);
       setTextIfExists('scenarioCEffRate', formatPercent(sc.effectiveTaxRate));
     }
 
@@ -690,14 +707,47 @@
       });
     }
 
-    scenarios.sort(function (x, y) { return y.net - x.net; });
+    scenarios.sort(function (x, y) {
+      var xShortfall = (x.months || 0) < monthsToLifeExpectancy;
+      var yShortfall = (y.months || 0) < monthsToLifeExpectancy;
+
+      if (xShortfall || yShortfall) {
+        // At least one scenario runs out before reaching life expectancy
+        if (!xShortfall && yShortfall) return -1; // x reaches life expectancy, y does not -> x wins
+        if (xShortfall && !yShortfall) return 1;  // y reaches life expectancy, x does not -> y wins
+
+        // Both scenarios run out before life expectancy:
+        // A scenario with fewer months to exhaustion cannot win
+        if ((x.months || 0) !== (y.months || 0)) {
+          return (y.months || 0) - (x.months || 0); // more months wins!
+        }
+        return y.net - x.net; // tie-breaker: higher net
+      }
+
+      // Both reach or exceed life expectancy: compare by net received
+      if (Math.abs(y.net - x.net) > 0.01) {
+        return y.net - x.net;
+      }
+      return (y.months || 0) - (x.months || 0);
+    });
+
     var winner = scenarios[0];
     var runnerUp = scenarios[1];
-    var diff = winner.net - runnerUp.net;
+    var netDiff = winner.net - runnerUp.net;
+    var monthsDiff = (winner.months || 0) - (runnerUp.months || 0);
 
     if (winnerBadge) {
-      if (diff > 0.01) {
-        winnerBadge.textContent = '✦ ' + winner.name + ' עדיף – תוספת נטו של ' + formatCurrency(diff);
+      if (monthsDiff > 0) {
+        if (netDiff >= 0.01) {
+          winnerBadge.textContent = '✦ ' + winner.name + ' עדיף – עוד ' + monthsDiff + ' חודשי משיכה ותוספת נטו של ' + formatCurrency(netDiff);
+        } else {
+          winnerBadge.textContent = '✦ ' + winner.name + ' עדיף – מאפשר ' + monthsDiff + ' חודשי משיכה נוספים (מיצוי לפני תוחלת חיים בגיל ' + lifeExpectancy + ')';
+        }
+        winnerBadge.style.color = winner.color;
+        winnerBadge.style.background = winner.bg;
+        winnerBadge.style.borderColor = winner.border;
+      } else if (netDiff > 0.01) {
+        winnerBadge.textContent = '✦ ' + winner.name + ' עדיף – תוספת נטו של ' + formatCurrency(netDiff);
         winnerBadge.style.color = winner.color;
         winnerBadge.style.background = winner.bg;
         winnerBadge.style.borderColor = winner.border;
@@ -711,8 +761,10 @@
 
     // ── Difference card ─────────────────────────────────────
     setTextIfExists('diffTax', formatCurrency(Math.abs(winner.tax - runnerUp.tax)));
-    setTextIfExists('diffNet', formatCurrency(Math.abs(diff)));
-    setTextIfExists('diffMonths', Math.abs((winner.months || 0) - (runnerUp.months || 0)) + ' חודשים');
+    var netDiffSign = netDiff > 0.01 ? '+' : (netDiff < -0.01 ? '-' : '');
+    setTextIfExists('diffNet', netDiffSign + formatCurrency(Math.abs(netDiff)));
+    var monthsDiffSign = monthsDiff > 0 ? '+' : (monthsDiff < 0 ? '-' : '');
+    setTextIfExists('diffMonths', monthsDiffSign + Math.abs(monthsDiff) + ' חודשים');
 
     var diffBreakevenContainer = byId('diffBreakevenContainer');
     if (diffBreakevenContainer) {
@@ -762,6 +814,7 @@
 
     // ── Breakdown table (Scenario A by default) ─────────────
     renderBreakdownTable(resultA.monthlyData, null, 'a');
+    initStickyBreakdownHeader();
 
     // Reset scenario tabs to A
     $$('.scenario-tab').forEach(function (t) {
@@ -794,6 +847,10 @@
     clearErrors();
     var valid = true;
 
+    // ── Global parameters ───────────────────────────────────
+    var currentAge = parseNum(byId('currentAge') ? byId('currentAge').value : 49) || 49;
+    var lifeExpectancy = parseNum(byId('lifeExpectancy') ? byId('lifeExpectancy').value : 90) || 90;
+
     // ── Common parameters ───────────────────────────────────
     var annualGrowth = parseNum(byId('toolAGrowth') ? byId('toolAGrowth').value : 0);
     var annualFee = parseNum(byId('toolAFee') ? byId('toolAFee').value : 0);
@@ -810,6 +867,16 @@
     var toolBGrowth = parseNum(byId('toolBGrowth') ? byId('toolBGrowth').value : 0);
     var toolBFee = parseNum(byId('toolBFee') ? byId('toolBFee').value : 0);
     var toolBTaxRate = parseNum(byId('toolBTaxRate') ? byId('toolBTaxRate').value : 25);
+
+    // Validate global
+    if (currentAge <= 0) {
+      showError('currentAge', 'יש להזין גיל נוכחי חיובי');
+      valid = false;
+    }
+    if (lifeExpectancy <= currentAge) {
+      showError('lifeExpectancy', 'תוחלת החיים חייבת להיות גדולה מהגיל הנוכחי');
+      valid = false;
+    }
 
     // Validate common
     if (monthlyWithdrawal <= 0) {
@@ -938,7 +1005,7 @@
     lastResultC = CalculationEngine.calculateScenarioC(paramsB);
 
     // ── Render ──────────────────────────────────────────────
-    renderResults(lastResultA, lastResultB, lastResultC);
+    renderResults(lastResultA, lastResultB, lastResultC, currentAge, lifeExpectancy);
 
     // ── Persist form state so reload restores inputs ────────
     if (typeof PersistenceManager !== 'undefined') {
@@ -962,7 +1029,15 @@
     setupChartTabs();
     setupScenarioTabs();
 
-    // 3. Set default withdrawal year to current year if empty
+    // 3. Set default currentAge, lifeExpectancy, withdrawal year if empty
+    var currentAgeInput = byId('currentAge');
+    if (currentAgeInput && !currentAgeInput.value) {
+      currentAgeInput.value = 49;
+    }
+    var lifeExpectancyInput = byId('lifeExpectancy');
+    if (lifeExpectancyInput && !lifeExpectancyInput.value) {
+      lifeExpectancyInput.value = 90;
+    }
     var withdrawalYearInput = byId('withdrawalYear');
     if (withdrawalYearInput && !withdrawalYearInput.value) {
       withdrawalYearInput.value = CURRENT_YEAR;
@@ -1013,4 +1088,83 @@
       }
     });
   });
+
+  // ══════════════════════════════════════════════════════════════
+  //  STICKY BREAKDOWN HEADER (JS-driven — CSS sticky is blocked
+  //  by overflow-x:auto on the scroll container)
+  // ══════════════════════════════════════════════════════════════
+
+  var _stickyScrollListener = null;
+  var _stickyHorizListener  = null;
+
+  function initStickyBreakdownHeader() {
+    // Remove any existing clone + listeners
+    var old = byId('sticky-breakdown-header');
+    if (old) old.remove();
+    if (_stickyScrollListener) {
+      window.removeEventListener('scroll', _stickyScrollListener, true);
+    }
+
+    var tableScroll = document.querySelector('.table-scroll');
+    var table       = document.querySelector('.breakdown-table');
+    if (!tableScroll || !table) return;
+
+    // Build fixed clone element
+    var bar = document.createElement('div');
+    bar.id = 'sticky-breakdown-header';
+    document.body.appendChild(bar);
+
+    var cloneTable = document.createElement('table');
+    cloneTable.className = 'breakdown-table';
+    bar.appendChild(cloneTable);
+
+    function syncAndShow() {
+      var tsRect    = tableScroll.getBoundingClientRect();
+      var realThead = table.querySelector('thead');
+      if (!realThead) { bar.style.display = 'none'; return; }
+      var theadRect = realThead.getBoundingClientRect();
+
+      // Show only when thead has scrolled above viewport but table still visible
+      if (theadRect.bottom <= 0 && tsRect.bottom > 0) {
+        // Re-clone thead content to stay in sync with tab switches
+        var freshThead = realThead.cloneNode(true);
+        var existing   = cloneTable.querySelector('thead');
+        if (existing) cloneTable.removeChild(existing);
+        cloneTable.appendChild(freshThead);
+
+        // Match each column width from real TH cells
+        var realThs  = realThead.querySelectorAll('th');
+        var cloneThs = freshThead.querySelectorAll('th');
+        realThs.forEach(function (th, i) {
+          var w = th.getBoundingClientRect().width;
+          if (cloneThs[i]) {
+            cloneThs[i].style.width    = w + 'px';
+            cloneThs[i].style.minWidth = w + 'px';
+            cloneThs[i].style.maxWidth = w + 'px';
+          }
+        });
+
+        // Position bar to align with the table-scroll container
+        bar.style.left    = tsRect.left  + 'px';
+        bar.style.width   = tsRect.width + 'px';
+        bar.style.display = 'block';
+
+        // Sync horizontal scroll offset so header tracks table sideways
+        bar.scrollLeft = tableScroll.scrollLeft;
+      } else {
+        bar.style.display = 'none';
+      }
+    }
+
+    _stickyScrollListener = syncAndShow;
+    window.addEventListener('scroll', syncAndShow, { passive: true });
+
+    // Sync horizontal scroll of bar when user scrolls the table sideways
+    if (_stickyHorizListener) {
+      tableScroll.removeEventListener('scroll', _stickyHorizListener);
+    }
+    _stickyHorizListener = function () { bar.scrollLeft = tableScroll.scrollLeft; };
+    tableScroll.addEventListener('scroll', _stickyHorizListener, { passive: true });
+  }
+
 })();

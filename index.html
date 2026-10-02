@@ -28,6 +28,22 @@
         <div class="card-body" id="globalParamsBody">
           <div class="form-row">
             <div class="form-group">
+              <label class="form-label" for="currentAge">גיל נוכחי</label>
+              <div class="input-group">
+                <input type="number" class="input-field" id="currentAge" value="49" min="18" max="120">
+                <span class="input-suffix">שנים</span>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="lifeExpectancy">תוחלת חיים צפויה</label>
+              <div class="input-group">
+                <input type="number" class="input-field" id="lifeExpectancy" value="90" min="18" max="120">
+                <span class="input-suffix">שנים</span>
+              </div>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
               <label class="form-label" for="monthlyWithdrawal">סכום משיכה חודשי</label>
               <div class="input-group">
                 <input type="text" inputmode="numeric" class="input-field number-input" id="monthlyWithdrawal" placeholder="5,000">

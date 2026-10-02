@@ -12,6 +12,7 @@ var PersistenceManager = (function () {
   // -- Scalar field IDs that are simple input values ----------
   var SCALAR_FIELDS = [
     // Global & Tool A
+    'currentAge', 'lifeExpectancy',
     'toolAGrowth', 'toolAFee', 'monthlyWithdrawal',
     'inflationRate', 'withdrawalYear',
     // Tool B

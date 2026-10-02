@@ -793,8 +793,7 @@ body::after {
 }
 
 .breakdown-table thead {
-  position: sticky;
-  top: 0;
+  position: relative;
   z-index: 2;
 }
 
@@ -806,6 +805,33 @@ body::after {
   color: var(--text-secondary);
   text-align: right;
   border-bottom: 1px solid var(--glass-border);
+  white-space: nowrap;
+}
+
+/* JS-driven sticky header clone */
+#sticky-breakdown-header {
+  position: fixed;
+  top: 0;
+  z-index: 300;
+  display: none;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  border-bottom: 1px solid var(--glass-border);
+}
+
+#sticky-breakdown-header .breakdown-table {
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+#sticky-breakdown-header thead th {
+  background: var(--bg-secondary);
+  padding: var(--sp-3) var(--sp-4);
+  font-size: 0.8125rem;
+  font-weight: var(--font-medium);
+  color: var(--text-secondary);
+  text-align: right;
   white-space: nowrap;
 }
 
